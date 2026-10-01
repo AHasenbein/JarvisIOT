@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local speech model + audio
+models/
+*.wav
+
+# Claude Code local state / logs
+.claude/
+*.log
