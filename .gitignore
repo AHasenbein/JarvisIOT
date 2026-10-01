@@ -24,3 +24,5 @@ models/
 # Claude Code local state / logs
 .claude/
 *.log
+
+jarvis.log

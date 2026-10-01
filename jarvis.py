@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 
 import govee
 
@@ -48,12 +49,21 @@ Scenes: {scenes}"""
 
 VALID_ACTIONS = {"on", "off", "brightness", "color", "temp", "scene"}
 
+# Output hooks. Plain terminal by default; voice.py swaps these for the animated UI.
+hooks = SimpleNamespace(
+    log=print,
+    state=lambda state, hold=None: None,
+    action=lambda kind, value, devices: None,
+    result=lambda text: None,
+    engine=lambda text: None,
+)
+
 # --- fast path -------------------------------------------------------------
 
 FILLER = {
     "hey", "jarvis", "please", "turn", "switch", "set", "make", "the", "lights", "light",
     "lamp", "lamps", "bulb", "bulbs", "in", "my", "to", "it", "a", "all", "of", "at",
-    "percent", "brightness", "color",
+    "percent", "brightness", "color", "run",  # "run" = common mishearing of "turn"
 }
 _UNITS = {w: i for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen "
@@ -224,9 +234,9 @@ def interpret(text, devices):
     names = sorted({d["deviceName"] for d in devices})
     actions = fast_path(text, names, list(govee.list_scenes(devices[0])))
     if actions is not None:
-        print("  (fast path)")
-        return actions
-    return extract_json(get_claude(devices).ask(text))
+        return actions, "fast path"
+    hooks.state("thinking")
+    return extract_json(get_claude(devices).ask(text)), "claude"
 
 
 def run_action(a):
@@ -245,22 +255,36 @@ def run_action(a):
     devs = govee.find_devices(target)
     for d in devs:
         fns[kind](d)
+    hooks.action(kind, value, devs)
     return f"{kind}{'' if value is None else ' ' + str(value)} -> {target or 'all lights'} ({len(devs)} bulb{'s' if len(devs) != 1 else ''})"
 
 
 def handle(text):
+    t0 = time.time()
     try:
-        actions = interpret(text, get_devices())
+        actions, engine = interpret(text, get_devices())
     except (Exception, SystemExit) as e:
-        print(f"  couldn't interpret that: {e}")
+        hooks.log(f"  couldn't interpret that: {e}")
+        hooks.result("couldn't interpret that")
+        hooks.state("error", 3)
         return
+    hooks.engine(f"{engine} ({time.time() - t0:.1f}s)")
     if not actions:
-        print("  (nothing to do with the lights)")
+        hooks.log("  (nothing to do with the lights)")
+        hooks.result("nothing to do with the lights")
+        hooks.state("idle")
+        return
+    ok = True
     for a in actions:
         try:
-            print("  " + run_action(a))
+            msg = run_action(a)
+            hooks.log("  " + msg)
+            hooks.result(msg)
         except (Exception, SystemExit) as e:
-            print(f"  failed {a}: {e}")
+            ok = False
+            hooks.log(f"  failed {a}: {e}")
+            hooks.result(f"failed: {e}")
+    hooks.state("success" if ok else "error", 3)
 
 
 def main(argv):
